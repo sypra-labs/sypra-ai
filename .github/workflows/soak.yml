@@ -36,7 +36,7 @@ jobs:
       - name: Sustain concurrent mock chat traffic
         run: go run ./cmd/sypra-loadtest --duration "${{ inputs.duration || '2m' }}" --concurrency 2 --timeout 25s --max-p95 20s --max-error-rate 0.01
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soak-api-log
           path: .cache/soak-*.log
