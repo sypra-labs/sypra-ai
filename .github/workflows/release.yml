@@ -145,7 +145,7 @@ jobs:
           ManifestVersion: 1.6.0
           EOF
       - name: Open winget-pkgs pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           path: winget-pkgs
           token: ${{ env.WINGET_PUBLISH_TOKEN }}
