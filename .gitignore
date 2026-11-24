@@ -1,0 +1,50 @@
+# Local configuration, credentials, and generated workspace state.
+# Private development records; keep these local to the workspace.
+ARCHITECTURE.md
+TESTING.md
+UX_POLICIES.md
+.env
+.env.*
+!.env.example
+
+# Recreated local build, package-manager, Vite, and CLI-session state.
+.cache/
+.sypra-runtime/
+.sypra/
+.vite/
+data/
+models/
+artifacts/
+uploads/
+dist/
+release/
+coverage.out
+*.coverprofile
+*.prof
+web/node_modules/
+web/dist/
+web/playwright-report/
+web/test-results/
+*.db
+*.db-shm
+*.db-wal
+
+# Downloaded model weights and generated runtime artifacts must never be
+# committed. Register models by path in local configuration instead.
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.adapter
+
+# Local build products and signing material.
+*.exe
+*.dll
+*.so
+*.dylib
+*.pem
+*.key
+*.p12
+*.pfx

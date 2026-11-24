@@ -1,0 +1,41 @@
+name: Real model validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: Self-hosted runner label with downloaded Qwen and MiniLM models
+        required: true
+        default: self-hosted
+      qwen_model_dir:
+        description: Absolute local Qwen model directory
+        required: true
+      training_dataset:
+        description: Absolute local CSV or JSONL fine-tuning dataset
+        required: true
+      minilm_model_dir:
+        description: Absolute local all-MiniLM-L6-v2 directory
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Validate real MiniLM RAG quality
+        env:
+          SYPRA_RAG_BENCHMARK_MODEL_PATH: ${{ inputs.minilm_model_dir }}
+          SYPRA_RAG_BENCHMARK_MIN_HIT_RATE: "0.80"
+        run: go test -tags=realmodel ./internal/rag -run TestRealMiniLMRetrievalBenchmark -count=1 -v
+      - name: Validate real Qwen fine-tuning
+        env:
+          SYPRA_REAL_MODEL_DIR: ${{ inputs.qwen_model_dir }}
+          SYPRA_REAL_MODEL_DATASET: ${{ inputs.training_dataset }}
+        run: go test -tags=realmodel ./internal/finetune -run TestRealQwenFineTuneE2E -count=1 -v

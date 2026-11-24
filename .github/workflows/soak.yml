@@ -1,0 +1,43 @@
+name: Mock API soak test
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Soak duration (for example 2m)
+        required: false
+        default: 2m
+  schedule:
+    - cron: "23 4 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Start API and standalone mock endpoint
+        shell: bash
+        run: |
+          mkdir -p .cache
+          go run ./cmd/sypra-mock --listen 127.0.0.1:8082 > .cache/soak-mock.log 2>&1 &
+          SYPRA_LISTEN_ADDR=127.0.0.1:8080 SYPRA_DATA_PATH=.cache/soak.json SYPRA_DATABASE_URL=sqlite://./.cache/soak.db go run ./cmd/sypra serve > .cache/soak-api.log 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null && curl --fail --silent http://127.0.0.1:8082/v1/models >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent --show-error -X POST http://127.0.0.1:8080/api/v1/models -H 'Content-Type: application/json' -d '{"name":"Sypra Mock","endpoint":"http://127.0.0.1:8082/v1","format":"api","family":"generic","modalities":["text"],"kind":"base"}' >/dev/null
+      - name: Sustain concurrent mock chat traffic
+        run: go run ./cmd/sypra-loadtest --duration "${{ inputs.duration || '2m' }}" --concurrency 2 --timeout 25s --max-p95 20s --max-error-rate 0.01
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-api-log
+          path: .cache/soak-*.log
+          if-no-files-found: ignore

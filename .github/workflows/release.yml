@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm run build
+        working-directory: web
+      - name: Build reproducible platform artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for target in "windows amd64 .exe zip" "linux amd64 - tar.gz" "darwin arm64 - tar.gz"; do
+            read -r os arch ext archive <<< "$target"
+            if [ "$ext" = "-" ]; then ext=""; fi
+            name="sypra-${version}-${os}-${arch}"
+            stage="dist/${name}"
+            mkdir -p "$stage/web"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${version}" -o "$stage/sypra${ext}" ./cmd/sypra
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$stage/sypra-mock${ext}" ./cmd/sypra-mock
+            cp README.md LICENSE .env.example "$stage/"
+            cp -R web/dist/. "$stage/web/"
+            if [ "$archive" = "zip" ]; then
+              (cd dist && zip -X -r "${name}.zip" "$name")
+            else
+              tar --sort=name --mtime='UTC 2026-01-01' --owner=0 --group=0 --numeric-owner -C dist -czf "dist/${name}.tar.gz" "$name"
+            fi
+          done
+          (cd dist && sha256sum *.zip *.tar.gz > SHA256SUMS.txt)
+      - uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/sypra-${{ github.ref_name }}.spdx.json
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
+
+  publish-winget:
+    name: Submit winget manifest
+    needs: build
+    # WINGET_FORK is the owner/name of a prepared fork of microsoft/winget-pkgs.
+    # Keeping this guarded means a normal release never writes to another repo.
+    if: ${{ vars.PUBLISH_WINGET == 'true' && vars.WINGET_FORK != '' }}
+    runs-on: ubuntu-latest
+    env:
+      WINGET_PUBLISH_TOKEN: ${{ secrets.WINGET_PUBLISH_TOKEN }}
+    permissions:
+      contents: read
+    steps:
+      - name: Download and hash the Windows release archive
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          archive="sypra-${tag}-windows-amd64.zip"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${archive}"
+          curl -fsSL "$url" -o "$archive"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$archive" | awk '{print toupper($1)}')" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/winget-pkgs
+          path: winget-pkgs
+          token: ${{ env.WINGET_PUBLISH_TOKEN }}
+      - name: Create versioned winget manifests
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          ARCHIVE: ${{ steps.release.outputs.archive }}
+          SHA256: ${{ steps.release.outputs.sha256 }}
+          URL: ${{ steps.release.outputs.url }}
+        run: |
+          set -euo pipefail
+          directory="winget-pkgs/manifests/s/SypraLabs/Sypra/${VERSION}"
+          mkdir -p "$directory"
+          cat > "$directory/SypraLabs.Sypra.yaml" <<EOF
+          PackageIdentifier: SypraLabs.Sypra
+          PackageVersion: ${VERSION}
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.6.0
+          EOF
+          cat > "$directory/SypraLabs.Sypra.locale.en-US.yaml" <<EOF
+          PackageIdentifier: SypraLabs.Sypra
+          PackageVersion: ${VERSION}
+          PackageLocale: en-US
+          Publisher: Sypra Labs
+          PublisherUrl: https://github.com/sypra-labs
+          PackageName: Sypra
+          PackageUrl: https://github.com/sypra-labs/sypra-ai
+          License: Apache-2.0
+          LicenseUrl: https://github.com/sypra-labs/sypra-ai/blob/main/LICENSE
+          ShortDescription: Local-first AI workspace for local models, RAG, and fine-tuning.
+          ManifestType: defaultLocale
+          ManifestVersion: 1.6.0
+          EOF
+          cat > "$directory/SypraLabs.Sypra.installer.yaml" <<EOF
+          PackageIdentifier: SypraLabs.Sypra
+          PackageVersion: ${VERSION}
+          InstallerType: zip
+          NestedInstallerType: portable
+          NestedInstallerFiles:
+            - RelativeFilePath: sypra-v${VERSION}-windows-amd64/sypra.exe
+              PortableCommandAlias: sypra
+          Installers:
+            - Architecture: x64
+              InstallerUrl: ${URL}
+              InstallerSha256: ${SHA256}
+          ManifestType: installer
+          ManifestVersion: 1.6.0
+          EOF
+      - name: Open winget-pkgs pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: winget-pkgs
+          token: ${{ env.WINGET_PUBLISH_TOKEN }}
+          push-to-fork: ${{ vars.WINGET_FORK }}
+          branch: sypra-labs/sypra-${{ steps.release.outputs.version }}
+          delete-branch: true
+          title: "New version: Sypra ${{ steps.release.outputs.version }}"
+          commit-message: "Add Sypra ${{ steps.release.outputs.version }}"
+          body: "Automated release submission for https://github.com/sypra-labs/sypra-ai."
+
+  publish-homebrew:
+    name: Publish Homebrew cask
+    needs: build
+    if: ${{ vars.PUBLISH_HOMEBREW == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: sypra-labs/homebrew-tap
+          path: homebrew-tap
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+      - name: Publish the versioned Sypra cask
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          archive="sypra-${tag}-darwin-arm64.tar.gz"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${archive}"
+          curl -fsSL "$url" -o "$archive"
+          sha="$(sha256sum "$archive" | awk '{print $1}')"
+          mkdir -p homebrew-tap/Casks
+          cat > homebrew-tap/Casks/sypra.rb <<EOF
+          cask "sypra" do
+            version "${version}"
+            sha256 "${sha}"
+
+            url "${url}"
+            name "Sypra"
+            desc "Local-first AI workspace for models, RAG, and fine-tuning"
+            homepage "https://github.com/sypra-labs/sypra-ai"
+
+            depends_on arch: :arm64
+            binary "sypra-v#{version}-darwin-arm64/sypra"
+          end
+          EOF
+          cd homebrew-tap
+          git config user.name "sypra-labs release bot"
+          git config user.email "release-bot@sypra-labs.github.io"
+          git add Casks/sypra.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "sypra ${version}"
+          git push origin HEAD:main
