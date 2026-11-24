@@ -1,3 +1,8 @@
+# Dependabot is intentionally paused for now.
+#
+# GitHub only activates Dependabot when this configuration is named exactly
+# .github/dependabot.yml. Rename this file back to dependabot.yml to resume
+# the update schedule below.
 version: 2
 updates:
   - package-ecosystem: gomod
