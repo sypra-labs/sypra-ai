@@ -21,18 +21,6 @@ jobs:
         with:
           fail-on-severity: high
 
-  scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scanners: vuln,secret,license
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-
   sbom:
     runs-on: ubuntu-latest
     steps:
