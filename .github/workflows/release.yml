@@ -13,7 +13,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: actions/setup-go@v5
@@ -95,7 +95,7 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$archive" | awk '{print toupper($1)}')" >> "$GITHUB_OUTPUT"
           echo "url=$url" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: microsoft/winget-pkgs
           path: winget-pkgs
@@ -169,7 +169,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: sypra-labs/homebrew-tap
           path: homebrew-tap
